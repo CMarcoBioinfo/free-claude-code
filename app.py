@@ -79,16 +79,20 @@ def lancer_systeme():
 
     # Détection des fichiers Node et Claude Code embarqués (mode portable autonome)
     chemin_node_embarque = os.path.join(dossier_base, "node.exe")
-    chemin_claude_embarque = os.path.join(dossier_base, "claude-cli.mjs") # <--- Correction de l'extension en .mjs
+    
+    # Détection dynamique de l'extension empaquetée (.mjs ou .js)
+    chemin_claude_js = os.path.join(dossier_base, "claude-cli.js")
+    chemin_claude_mjs = os.path.join(dossier_base, "claude-cli.mjs")
+    chemin_claude_embarque = chemin_claude_mjs if os.path.exists(chemin_claude_mjs) else chemin_claude_js
+    
     mode_portable_actif = os.path.exists(chemin_node_embarque) and os.path.exists(chemin_claude_embarque)
 
     # Lancement de l'agent Claude Code
     print(f"Ouverture de Claude Code dans : {dossier_travail}")
     try:
         if sys.platform == "win32" and mode_portable_actif:
-            print("Mode portable détecté : Lancement de Node.js et Claude Code embarqués...")
-            # On utilise le drapeau CREATE_NEW_CONSOLE pour forcer Windows à ouvrir 
-            # un terminal indépendant pour notre Node.js et son script .mjs
+            print(f"Mode portable détecté : Lancement de Node.js avec {os.path.basename(chemin_claude_embarque)}...")
+            # Drapeau CREATE_NEW_CONSOLE pour ouvrir proprement l'invite de commande Windows native
             subprocess.run(
                 [chemin_node_embarque, chemin_claude_embarque],
                 cwd=dossier_travail,
