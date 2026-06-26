@@ -3,7 +3,7 @@ name: Compilation automatique Multiplateforme
 on:
   push:
     tags:
-      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.3)
+      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.4)
   workflow_dispatch: # Permet de lancer la compilation manuellement depuis GitHub
 
 permissions:
@@ -71,9 +71,27 @@ jobs:
         mkdir tiktoken_cache
         curl -o tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4 https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
 
-    - name: Compiler l'exécutable Windows
+    - name: Télécharger Node.js portable (Windows)
       run: |
-        pyinstaller --onefile --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --add-data "tiktoken_cache;tiktoken_cache" --name "fcc-wrapper-windows" app.py
+        curl -o node.exe https://nodejs.org/dist/v20.11.1/win-x64/node.exe
+
+    - name: Installer Claude Code via npm pour récupérer le JS autonome
+      run: |
+        npm install @anthropic-ai/claude-code
+        # Extraction du fichier JS d'exécution autonome du paquet
+        Copy-Item -Path "node_modules/@anthropic-ai/claude-code/cli.js" -Destination "claude-cli.js" -ErrorAction SilentlyContinue
+        Copy-Item -Path "node_modules/@anthropic-ai/claude-code/cli.mjs" -Destination "claude-cli.js" -ErrorAction SilentlyContinue
+        Copy-Item -Path "node_modules/@anthropic-ai/claude-code/bin/cli.js" -Destination "claude-cli.js" -ErrorAction SilentlyContinue
+        Copy-Item -Path "node_modules/@anthropic-ai/claude-code/bin/cli.mjs" -Destination "claude-cli.js" -ErrorAction SilentlyContinue
+        # Sécurité si le chemin de fichier est différent dans une autre version
+        if (!(Test-Path "claude-cli.js")) {
+            Get-ChildItem -Path "node_modules" -Filter "cli.*" -Recurse | Select-Object -First 1 | Copy-Item -Destination "claude-cli.js"
+        }
+
+    - name: Compiler l'exécutable Windows Autonome (Python + Node + Claude)
+      run: |
+        # On injecte le cache Tiktoken, le node.exe portable et le fichier JS autonome de Claude
+        pyinstaller --onefile --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --add-data "tiktoken_cache;tiktoken_cache" --add-data "node.exe;." --add-data "claude-cli.js;." --name "fcc-wrapper-windows" app.py
 
     - name: Sauvegarder l'artefact Windows
       uses: actions/upload-artifact@v4
