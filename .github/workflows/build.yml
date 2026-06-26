@@ -68,24 +68,24 @@ jobs:
 
     - name: Préparer le cache hors-ligne Tiktoken
       run: |
-        mkdir tiktoken_cache
-        curl -o tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4 https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+        mkdir -p tiktoken_cache
+        curl -L -o tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4 https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
 
     - name: Télécharger Node.js portable (Windows)
       run: |
-        curl -o node.exe https://nodejs.org/dist/v20.11.1/win-x64/node.exe
+        curl -L -o node.exe https://nodejs.org/dist/v20.11.1/win-x64/node.exe
 
-    - name: Installer Claude Code via npm pour récupérer le JS autonome
+    - name: Installer Claude Code et copier le fichier cli.js
       run: |
         npm install @anthropic-ai/claude-code
-        # Extraction du fichier JS d'exécution autonome du paquet
-        Copy-Item -Path "node_modules/@anthropic-ai/claude-code/cli.js" -Destination "claude-cli.js" -ErrorAction SilentlyContinue
-        Copy-Item -Path "node_modules/@anthropic-ai/claude-code/cli.mjs" -Destination "claude-cli.js" -ErrorAction SilentlyContinue
-        Copy-Item -Path "node_modules/@anthropic-ai/claude-code/bin/cli.js" -Destination "claude-cli.js" -ErrorAction SilentlyContinue
-        Copy-Item -Path "node_modules/@anthropic-ai/claude-code/bin/cli.mjs" -Destination "claude-cli.js" -ErrorAction SilentlyContinue
-        # Sécurité si le chemin de fichier est différent dans une autre version
-        if (!(Test-Path "claude-cli.js")) {
-            Get-ChildItem -Path "node_modules" -Filter "cli.*" -Recurse | Select-Object -First 1 | Copy-Item -Destination "claude-cli.js"
+        # Recherche récursive robuste du fichier cli.js dans node_modules
+        $cliFile = Get-ChildItem -Path "node_modules" -Filter "cli.js" -Recurse | Select-Object -First 1
+        if ($cliFile) {
+            Copy-Item -Path $cliFile.FullName -Destination "claude-cli.js" -Force
+            Write-Host "Trouvé et copié avec succès : $($cliFile.FullName)"
+        } else {
+            Write-Error "Erreur : Impossible de trouver le fichier cli.js de Claude Code dans node_modules !"
+            exit 1
         }
 
     - name: Compiler l'exécutable Windows Autonome (Python + Node + Claude)
