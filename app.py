@@ -1,148 +1,144 @@
 import os
 import subprocess
 import sys
+import threading
 import time
 import tkinter as tk
-from tkinter import filedialog
-from pathlib import Path
+from tkinter import filedialog, messagebox
+import traceback
 
-# ---------------------------------------------------------
-# 1. Récupérer le dossier où se trouve l'exécutable
-# ---------------------------------------------------------
-def get_executable_dir():
-    """Retourne le dossier où se trouve l'exécutable ou le script."""
-    if getattr(sys, 'frozen', False):
-        # Exécutable PyInstaller
-        return Path(sys.executable).parent
-    else:
-        # Mode script
-        return Path(__file__).parent
+def obtenir_port_depuis_fcc():
+    """Lit le fichier ~/.fcc/.env ou %USERPROFILE%\.fcc\.env pour récupérer le port."""
+    home = os.path.expanduser("~")
+    chemin_env = os.path.join(home, ".fcc", ".env")
+    port_defaut = "8082"
+    
+    if os.path.exists(chemin_env):
+        try:
+            with open(chemin_env, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip().startswith("PORT="):
+                        valeur = line.split("=")[1].strip()
+                        return valeur.replace('"', '').replace("'", "")
+        except Exception as e:
+            print(f"Erreur lors de la lecture de ~/.fcc/.env : {e}")
+            
+    return port_defaut
 
-# ---------------------------------------------------------
-# 2. Charger configs/.env à côté de l'exécutable
-# ---------------------------------------------------------
-def load_config():
-    exe_dir = get_executable_dir()
-    config_file = exe_dir / "configs" / ".env"
-
-    if not config_file.exists():
-        print("ERREUR : Le fichier configs/.env est introuvable.")
-        print(f"Chemin attendu : {config_file}")
-        sys.exit(1)
-
-    env = {}
-    for line in config_file.read_text(encoding="utf-8").splitlines():
-        if "=" in line:
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip()
-
-    return env
-
-# ---------------------------------------------------------
-# 3. Sélection du dossier de travail
-# ---------------------------------------------------------
 def selectionner_dossier():
+    """Affiche le sélecteur de dossier et le force au tout premier plan."""
     root = tk.Tk()
     root.withdraw()
-    dossier = filedialog.askdirectory(title="Sélectionnez votre dossier de travail")
+    root.lift()
+    root.attributes("-topmost", True)
+    root.update()
+    
+    dossier = filedialog.askdirectory(title="Sélectionnez votre dossier de travail", parent=root)
+    root.destroy()
+    
     if not dossier:
         print("Aucun dossier sélectionné, fermeture.")
         sys.exit()
     return dossier
 
-# ---------------------------------------------------------
-# 4. Lancement du système
-# ---------------------------------------------------------
+def demarrer_serveur_interne(port):
+    """Démarre le serveur FastAPI de free-claude-code directement dans ce processus."""
+    try:
+        # En important 'server' directement, PyInstaller comprend qu'il doit 
+        # inclure tout free-claude-code (FastAPI, Uvicorn, etc.) dans l'exécutable !
+        import uvicorn
+        from server import app
+        
+        # Lancement du serveur uvicorn en local
+        uvicorn.run(app, host="127.0.0.1", port=int(port), log_level="warning")
+    except Exception as e:
+        print(f"Erreur critique du serveur proxy interne : {e}")
+        # Écrit l'erreur du serveur dans un fichier pour le debug
+        with open("fcc_server_error.log", "w", encoding="utf-8") as f:
+            traceback.print_exc(file=f)
+
 def lancer_systeme():
-    # Charger la configuration
-    env = load_config()
-    port = env.get("PORT", "8082")
-
     dossier_travail = selectionner_dossier()
+    port = obtenir_port_depuis_fcc()
 
-    # Redirection de Claude Code vers ton proxy
+    # Configuration des variables d'environnement pour Claude Code
     os.environ["ANTHROPIC_BASE_URL"] = f"http://localhost:{port}"
     os.environ["ANTHROPIC_API_KEY"] = "fake-key-pour-passer-les-verifications"
 
-    # Lancement du proxy
+    # Lancement du serveur proxy dans un Thread d'arrière-plan autonome
     print(f"Démarrage du proxy local sur le port {port}...")
+    server_thread = threading.Thread(
+        target=demarrer_serveur_interne, 
+        args=(port,), 
+        daemon=True # daemon=True permet de couper le thread dès que le script principal s'arrête
+    )
+    server_thread.start()
 
-    python_cmd = "python3" if sys.platform != "win32" else "python"
-
-    try:
-        proxy_process = subprocess.Popen(
-            ["fcc-server"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-    except FileNotFoundError:
-        chemin_serveur = os.path.join(os.path.dirname(os.path.realpath(__file__)), "server.py")
-        if not os.path.exists(chemin_serveur):
-            chemin_serveur = "server.py"
-
-        proxy_process = subprocess.Popen(
-            [python_cmd, chemin_serveur],
-            # stdout=subprocess.DEVNULL,
-            # stderr=subprocess.DEVNULL
-        )
-
+    # On attend 2 secondes que le serveur s'initialise
     time.sleep(2)
 
+    # Démarrage de l'agent Claude Code
     print(f"Ouverture de Claude Code dans : {dossier_travail}")
-
     try:
         if sys.platform == "win32":
-            subprocess.run(
+            # Windows : lance l'invite de commande, attend qu'elle se ferme, puis continue
+            result = subprocess.run(
                 ["cmd", "/c", "start", "/wait", "cmd", "/c", "fcc-claude"],
                 cwd=dossier_travail
             )
+            if result.returncode != 0:
+                raise RuntimeError("Le terminal Windows a renvoyé une erreur ou a été bloqué.")
         else:
+            # Linux (Ubuntu)
             try:
                 subprocess.run(["x-terminal-emulator", "-e", "fcc-claude"], cwd=dossier_travail)
             except FileNotFoundError:
                 subprocess.run(["fcc-claude"], cwd=dossier_travail)
-
+                
     except FileNotFoundError:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["cmd", "/c", "start", "/wait", "cmd", "/c", "npx @anthropic-ai/claude-code"],
-                cwd=dossier_travail
+        # Fallback si fcc-claude n'est pas global (on tente avec npx)
+        print("fcc-claude non trouvé, tentative avec npx...")
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["cmd", "/c", "start", "/wait", "cmd", "/c", "npx @anthropic-ai/claude-code"],
+                    cwd=dossier_travail
+                )
+            else:
+                try:
+                    subprocess.run(["x-terminal-emulator", "-e", "npx @anthropic-ai/claude-code"], cwd=dossier_travail)
+                except FileNotFoundError:
+                    subprocess.run(["npx", "@anthropic-ai/claude-code"], cwd=dossier_travail)
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                f"Impossible de lancer Claude Code. Node.js (npx) ou fcc-claude ne semblent pas installés "
+                f"sur cet ordinateur. (Erreur: {e})"
             )
-        else:
-            try:
-                subprocess.run(["x-terminal-emulator", "-e", "npx @anthropic-ai/claude-code"], cwd=dossier_travail)
-            except FileNotFoundError:
-                subprocess.run(["npx", "@anthropic-ai/claude-code"], cwd=dossier_travail)
-
     finally:
-        print("\nFermeture du proxy et nettoyage en cours...")
-        proxy_process.kill()
-        print("Système arrêté proprement.")
-
-# ---------------------------------------------------------
-# 5. Main
-# ---------------------------------------------------------
-from tkinter import messagebox
-import traceback
+        # Nettoyage automatique : Pas besoin de "kill" de processus car le thread est "daemon"
+        # et s'éteindra automatiquement à la fin de la fonction main
+        print("\nFermeture du proxy et nettoyage...")
+        print("Système arrêté.")
 
 if __name__ == "__main__":
     try:
         lancer_systeme()
     except Exception as e:
-        # 1. Écrire l'erreur dans un fichier de log local
-        chemin_log = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "fcc_debug.log")
+        dossier_exe = os.path.dirname(os.path.realpath(sys.argv[0]))
+        chemin_log = os.path.join(dossier_exe, "fcc_debug.log")
+        
         try:
             with open(chemin_log, "w", encoding="utf-8") as f:
                 traceback.print_exc(file=f)
-        except Exception as log_error:
-            print(f"Impossible d'écrire le log : {log_error}")
+        except Exception as log_err:
+            print(f"Impossible d'écrire le fichier de log : {log_err}")
 
-        # 2. Afficher une pop-up d'erreur à l'utilisateur
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
         messagebox.showerror(
-            "Erreur de démarrage",
-            f"Une erreur est survenue :\n\n{e}\n\nUn fichier 'fcc_debug.log' a été créé avec les détails."
+            "Erreur de fonctionnement",
+            f"L'application a rencontré un problème :\n\n{e}\n\n"
+            f"Les détails techniques ont été enregistrés dans :\n{chemin_log}"
         )
         root.destroy()
