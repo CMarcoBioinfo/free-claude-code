@@ -80,55 +80,27 @@ jobs:
         # On force l'installation en local dans le répertoire courant avec --prefix .
         npm install --prefix . @anthropic-ai/claude-code
         
-        # 1. Chemins précis cibles à tester directement (évite les bugs de chemins trop longs)
-        $potential_paths = @(
-            "node_modules\@anthropic-ai\claude-code\cli.js",
-            "node_modules\@anthropic-ai\claude-code\cli.mjs",
-            "node_modules\@anthropic-ai\claude-code\bin\cli.js",
-            "node_modules\@anthropic-ai\claude-code\bin\cli.mjs",
-            "$env:APPDATA\npm\node_modules\@anthropic-ai\claude-code\cli.js",
-            "$env:APPDATA\npm\node_modules\@anthropic-ai\claude-code\cli.mjs"
-        )
+        # Recherche par taille ultra-robuste (le binaire de Claude fait entre 13Mo et 23Mo)
+        # Cela évite de dépendre du nom exact (cli.js, cli.mjs, index.js) ou des sous-dossiers
+        Write-Host "Recherche par taille dans node_modules/@anthropic-ai/claude-code..."
+        $cliFile = Get-ChildItem -Path "node_modules/@anthropic-ai/claude-code" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 2MB } | Select-Object -First 1
         
-        $foundPath = $null
-        foreach ($path in $potential_paths) {
-            if (Test-Path $path) {
-                $foundPath = $path
-                break
+        # Diagnostic de sécurité si introuvable
+        if (!$cliFile) {
+            Write-Host "DIAGNOSTIC : Liste récursive des fichiers de claude-code..."
+            if (Test-Path "node_modules/@anthropic-ai/claude-code") {
+                Get-ChildItem -Path "node_modules/@anthropic-ai/claude-code" -Recurse | Select-Object Name, Length | Out-String | Write-Host
             }
-        }
-        
-        # 2. Si non trouvé directement, recherche globale uniquement dans le dossier cible
-        if (!$foundPath) {
-            Write-Host "Non trouvé directement. Recherche ciblée dans node_modules/@anthropic-ai..."
-            if (Test-Path "node_modules\@anthropic-ai") {
-                $foundPath = (Get-ChildItem -Path "node_modules\@anthropic-ai" -Filter "cli.*" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-            }
-        }
-        
-        # 3. Diagnostic complet en direct dans la console s'il est toujours introuvable
-        if (!$foundPath) {
-            Write-Host "DIAGNOSTIC : Liste des répertoires existants..."
-            if (Test-Path "node_modules") {
-                Write-Host "Dossiers dans node_modules :"
-                Get-ChildItem -Path "node_modules" | Select-Object Name | Out-String | Write-Host
-            }
-            if (Test-Path "node_modules\@anthropic-ai\claude-code") {
-                Write-Host "Fichiers dans node_modules/@anthropic-ai/claude-code :"
-                Get-ChildItem -Path "node_modules\@anthropic-ai\claude-code" | Select-Object Name | Out-String | Write-Host
-            }
-            Write-Error "Erreur critique : Impossible de localiser le fichier d'exécution de Claude Code sur l'intégralité du système du Runner !"
+            Write-Error "Erreur critique : Impossible de localiser le fichier d'exécution (> 2Mo) de Claude !"
             exit 1
         }
         
-        # Copie et renommage dynamique avec l'extension correspondante (.js ou .mjs)
-        $extension = [System.IO.Path]::GetExtension($foundPath)
+        # Copie dynamique en conservant l'extension d'origine (.js ou .mjs)
+        $extension = [System.IO.Path]::GetExtension($cliFile.FullName)
         $destination = "claude-cli" + $extension
-        Copy-Item -Path $foundPath -Destination $destination -Force
+        Copy-Item -Path $cliFile.FullName -Destination $destination -Force
         
-        Write-Host "Trouvé et copié avec succès depuis : $foundPath vers $destination"
-        
-        # On enregistre le nom de fichier trouvé dans les variables d'environnement de GitHub pour PyInstaller
+        Write-Host "Trouvé et copié avec succès ($($cliFile.Length / 1MB) Mo) depuis : $($cliFile.FullName) vers $destination"
         echo "CLAUDE_FILE=$destination" >> $env:GITHUB_ENV
 
     - name: Compiler l'exécutable Windows Autonome (Python + Node + Claude)
