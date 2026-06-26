@@ -7,6 +7,12 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import traceback
 
+# === CONFIGURATION TIKTOKEN POUR LE HORS-LIGNE (CHU) ===
+# On redirige le dossier de cache de tiktoken vers le répertoire temporaire de l'exécutable
+dossier_base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+os.environ["TIKTOKEN_CACHE_DIR"] = os.path.join(dossier_base, "tiktoken_cache")
+# =======================================================
+
 def obtenir_port_depuis_fcc():
     """Lit le fichier ~/.fcc/.env ou %USERPROFILE%\.fcc\.env pour récupérer le port."""
     home = os.path.expanduser("~")
