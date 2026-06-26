@@ -64,7 +64,7 @@ jobs:
     - name: Compiler l'exécutable Windows
       run: |
         # --noconsole empêche l'apparition d'un terminal noir vide sous Windows
-        pyinstaller --onefile --noconsole --name "fcc-wrapper-windows" app.py
+        pyinstaller --onefile --name "fcc-wrapper-windows" app.py
 
     - name: Sauvegarder l'artefact Windows
       uses: actions/upload-artifact@v4
