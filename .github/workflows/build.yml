@@ -30,7 +30,7 @@ jobs:
     - name: Installer les dépendances
       run: |
         python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install .
         pip install pyinstaller
 
     - name: Compiler le binaire Linux
@@ -58,12 +58,11 @@ jobs:
     - name: Installer les dépendances
       run: |
         python -m pip install --upgrade pip
-        if (Test-Path requirements.txt) { pip install -r requirements.txt }
+        pip install .
         pip install pyinstaller
 
     - name: Compiler l'exécutable Windows
       run: |
-        # --noconsole empêche l'apparition d'un terminal noir vide sous Windows
         pyinstaller --onefile --name "fcc-wrapper-windows" app.py
 
     - name: Sauvegarder l'artefact Windows
