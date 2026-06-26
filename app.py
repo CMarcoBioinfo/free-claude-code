@@ -82,8 +82,8 @@ def lancer_systeme():
 
         proxy_process = subprocess.Popen(
             [python_cmd, chemin_serveur],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            # stdout=subprocess.DEVNULL,
+            # stderr=subprocess.DEVNULL
         )
 
     time.sleep(2)
