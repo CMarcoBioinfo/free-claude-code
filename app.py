@@ -122,5 +122,27 @@ def lancer_systeme():
 # ---------------------------------------------------------
 # 5. Main
 # ---------------------------------------------------------
+from tkinter import messagebox
+import traceback
+
 if __name__ == "__main__":
-    lancer_systeme()
+    try:
+        lancer_systeme()
+    except Exception as e:
+        # 1. Écrire l'erreur dans un fichier de log local
+        chemin_log = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "fcc_debug.log")
+        try:
+            with open(chemin_log, "w", encoding="utf-8") as f:
+                traceback.print_exc(file=f)
+        except Exception as log_error:
+            print(f"Impossible d'écrire le log : {log_error}")
+
+        # 2. Afficher une pop-up d'erreur à l'utilisateur
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        messagebox.showerror(
+            "Erreur de démarrage",
+            f"Une erreur est survenue :\n\n{e}\n\nUn fichier 'fcc_debug.log' a été créé avec les détails."
+        )
+        root.destroy()
