@@ -7,8 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import traceback
 
-# === CONFIGURATION TIKTOKEN POUR LE HORS-LIGNE (CHU) ===
-# On redirige le dossier de cache de tiktoken vers le répertoire temporaire de l'exécutable
+# === CONFIGURATION TIKTOKEN POUR LE HORS-LIGNE ===
 dossier_base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 os.environ["TIKTOKEN_CACHE_DIR"] = os.path.join(dossier_base, "tiktoken_cache")
 # =======================================================
@@ -50,16 +49,11 @@ def selectionner_dossier():
 def demarrer_serveur_interne(port):
     """Démarre le serveur FastAPI de free-claude-code directement dans ce processus."""
     try:
-        # En important 'server' directement, PyInstaller comprend qu'il doit 
-        # inclure tout free-claude-code (FastAPI, Uvicorn, etc.) dans l'exécutable !
         import uvicorn
         from server import app
-        
-        # Lancement du serveur uvicorn en local
         uvicorn.run(app, host="127.0.0.1", port=int(port), log_level="warning")
     except Exception as e:
         print(f"Erreur critique du serveur proxy interne : {e}")
-        # Écrit l'erreur du serveur dans un fichier pour le debug
         with open("fcc_server_error.log", "w", encoding="utf-8") as f:
             traceback.print_exc(file=f)
 
@@ -76,24 +70,36 @@ def lancer_systeme():
     server_thread = threading.Thread(
         target=demarrer_serveur_interne, 
         args=(port,), 
-        daemon=True # daemon=True permet de couper le thread dès que le script principal s'arrête
+        daemon=True
     )
     server_thread.start()
 
     # On attend 2 secondes que le serveur s'initialise
     time.sleep(2)
 
-    # Démarrage de l'agent Claude Code
+    # Détection des fichiers Node et Claude Code embarqués (mode portable autonome)
+    chemin_node_embarque = os.path.join(dossier_base, "node.exe")
+    chemin_claude_embarque = os.path.join(dossier_base, "claude-cli.js")
+    mode_portable_actif = os.path.exists(chemin_node_embarque) and os.path.exists(chemin_claude_embarque)
+
+    # Lancement de l'agent Claude Code
     print(f"Ouverture de Claude Code dans : {dossier_travail}")
     try:
-        if sys.platform == "win32":
-            # Windows : lance l'invite de commande, attend qu'elle se ferme, puis continue
-            result = subprocess.run(
+        if sys.platform == "win32" and mode_portable_actif:
+            print("Mode portable détecté : Lancement de Node.js et Claude Code embarqués...")
+            # On utilise le drapeau CREATE_NEW_CONSOLE pour forcer Windows à ouvrir 
+            # un terminal natif indépendant de manière propre pour notre Node.js embarqué
+            subprocess.run(
+                [chemin_node_embarque, chemin_claude_embarque],
+                cwd=dossier_travail,
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+        elif sys.platform == "win32":
+            # Mode non-portable : On dépend du système de l'ordinateur
+            subprocess.run(
                 ["cmd", "/c", "start", "/wait", "cmd", "/c", "fcc-claude"],
                 cwd=dossier_travail
             )
-            if result.returncode != 0:
-                raise RuntimeError("Le terminal Windows a renvoyé une erreur ou a été bloqué.")
         else:
             # Linux (Ubuntu)
             try:
@@ -101,28 +107,12 @@ def lancer_systeme():
             except FileNotFoundError:
                 subprocess.run(["fcc-claude"], cwd=dossier_travail)
                 
-    except FileNotFoundError:
-        # Fallback si fcc-claude n'est pas global (on tente avec npx)
-        print("fcc-claude non trouvé, tentative avec npx...")
-        try:
-            if sys.platform == "win32":
-                subprocess.run(
-                    ["cmd", "/c", "start", "/wait", "cmd", "/c", "npx @anthropic-ai/claude-code"],
-                    cwd=dossier_travail
-                )
-            else:
-                try:
-                    subprocess.run(["x-terminal-emulator", "-e", "npx @anthropic-ai/claude-code"], cwd=dossier_travail)
-                except FileNotFoundError:
-                    subprocess.run(["npx", "@anthropic-ai/claude-code"], cwd=dossier_travail)
-        except FileNotFoundError as e:
-            raise RuntimeError(
-                f"Impossible de lancer Claude Code. Node.js (npx) ou fcc-claude ne semblent pas installés "
-                f"sur cet ordinateur. (Erreur: {e})"
-            )
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            f"Impossible de lancer Claude Code. Le moteur Node.js embarqué ou l'agent est introuvable. "
+            f"(Détails: {e})"
+        )
     finally:
-        # Nettoyage automatique : Pas besoin de "kill" de processus car le thread est "daemon"
-        # et s'éteindra automatiquement à la fin de la fonction main
         print("\nFermeture du proxy et nettoyage...")
         print("Système arrêté.")
 
