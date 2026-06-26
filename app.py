@@ -5,6 +5,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
+import webbrowser
 from tkinter import filedialog, messagebox
 
 import uvicorn
@@ -66,7 +67,6 @@ def demarrer_serveur_interne(port):
 
 
 def lancer_systeme():
-    dossier_travail = selectionner_dossier()
     port = obtenir_port_depuis_fcc()
 
     # Configuration des variables d'environnement pour Claude Code
@@ -83,10 +83,13 @@ def lancer_systeme():
     # On attend 2 secondes que le serveur s'initialise
     time.sleep(2)
 
+    # Ouverture automatique de la page de configuration (Admin UI) dans le navigateur
+    url_admin = f"http://127.0.0.1:{port}/admin"
+    print(f"Ouverture de l'interface d'administration : {url_admin}")
+    webbrowser.open(url_admin)
+
     # Détection des fichiers Node et Claude Code embarqués (mode portable autonome)
     chemin_node_embarque = os.path.join(dossier_base, "node.exe")
-
-    # Détection dynamique de l'extension empaquetée (.mjs ou .js)
     chemin_claude_js = os.path.join(dossier_base, "claude-cli.js")
     chemin_claude_mjs = os.path.join(dossier_base, "claude-cli.mjs")
     chemin_claude_embarque = (
@@ -99,41 +102,68 @@ def lancer_systeme():
         chemin_claude_embarque
     )
 
-    # Lancement de l'agent Claude Code
-    print(f"Ouverture de Claude Code dans : {dossier_travail}")
-    try:
-        if sys.platform == "win32" and mode_portable_actif:
-            print(
-                f"Mode portable détecté : Lancement de Node.js avec {os.path.basename(chemin_claude_embarque)}..."
-            )
-            # Drapeau CREATE_NEW_CONSOLE pour ouvrir proprement l'invite de commande Windows native
-            subprocess.run(
-                [chemin_node_embarque, chemin_claude_embarque],
-                cwd=dossier_travail,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
-        elif sys.platform == "win32":
-            subprocess.run(
-                ["cmd", "/c", "start", "/wait", "cmd", "/c", "fcc-claude"],
-                cwd=dossier_travail,
-            )
-        else:
-            # Linux (Ubuntu)
-            try:
-                subprocess.run(
-                    ["x-terminal-emulator", "-e", "fcc-claude"], cwd=dossier_travail
-                )
-            except FileNotFoundError:
-                subprocess.run(["fcc-claude"], cwd=dossier_travail)
+    print("\n" + "=" * 60)
+    print(f"Le serveur proxy Claude Code est ACTIF sur : http://localhost:{port}")
+    print(f"Interface d'administration (Admin UI) ouverte à : {url_admin}")
+    print("=" * 60)
 
-    except FileNotFoundError as e:
-        raise RuntimeError(
-            "Impossible de lancer Claude Code. Le moteur Node.js embarqué ou l'agent est introuvable. "
-            f"(Détails: {e})"
-        ) from e
-    finally:
-        print("\nFermeture du proxy et nettoyage...")
-        print("Système arrêté.")
+    # Menu de contrôle
+    continuer = True
+    while continuer:
+        print("\n--- MENU DE CONTRÔLE ---")
+        if mode_portable_actif:
+            print("1. Lancer l'invite de commande Claude Code")
+            print("2. Garder uniquement le serveur actif en tâche de fond (Admin UI)")
+            print("3. Arrêter le serveur et quitter")
+        else:
+            print("1. Garder le serveur actif en tâche de fond (Admin UI)")
+            print("2. Arrêter le serveur et quitter")
+
+        choix = input("Votre choix : ").strip()
+
+        if mode_portable_actif and choix == "1":
+            dossier_travail = selectionner_dossier()
+            print(f"Ouverture de Claude Code dans : {dossier_travail}")
+            try:
+                if sys.platform == "win32":
+                    subprocess.run(
+                        [
+                            "cmd",
+                            "/c",
+                            "start",
+                            "/wait",
+                            "cmd",
+                            "/k",
+                            f'""{chemin_node_embarque}" "{chemin_claude_embarque}""',
+                        ],
+                        cwd=dossier_travail,
+                    )
+                else:
+                    try:
+                        subprocess.run(
+                            ["x-terminal-emulator", "-e", "fcc-claude"],
+                            cwd=dossier_travail,
+                        )
+                    except FileNotFoundError:
+                        subprocess.run(["fcc-claude"], cwd=dossier_travail)
+            except Exception as e:
+                print(f"Erreur lors du lancement de Claude : {e}")
+        elif (mode_portable_actif and choix == "2") or (
+            not mode_portable_actif and choix == "1"
+        ):
+            print("\nLe serveur est maintenu actif. L'Admin UI est disponible.")
+            print("Pour arrêter le serveur à tout moment, appuyez sur ENTRÉE ici.")
+            input()
+            continuer = False
+        elif (mode_portable_actif and choix == "3") or (
+            not mode_portable_actif and choix == "2"
+        ):
+            continuer = False
+        else:
+            print("Option invalide. Veuillez réessayer.")
+
+    print("\nFermeture du proxy et nettoyage...")
+    print("Système arrêté.")
 
 
 if __name__ == "__main__":
