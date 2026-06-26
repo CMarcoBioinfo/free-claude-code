@@ -68,48 +68,67 @@ jobs:
 
     - name: Préparer le cache hors-ligne Tiktoken
       run: |
-        mkdir -p tiktoken_cache
+        mkdir tiktoken_cache
         curl -L -o tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4 https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
 
     - name: Télécharger Node.js portable (Windows)
       run: |
         curl -L -o node.exe https://nodejs.org/dist/v20.11.1/win-x64/node.exe
 
-    - name: Installer Claude Code et copier le fichier cli.js
+    - name: Installer Claude Code et copier le fichier cli.js/cli.mjs
       run: |
         # On force l'installation en local dans le répertoire courant avec --prefix .
         npm install --prefix . @anthropic-ai/claude-code
         
-        # Recherche multi-zones ultra-robuste de cli.js
-        Write-Host "Recherche locale du fichier cli.js..."
-        $cliFile = Get-ChildItem -Path "node_modules" -Filter "cli.js" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        # Liste des noms de fichiers cibles possibles (mjs pour ES Modules, js pour version classique)
+        $targets = @("cli.mjs", "cli.js")
+        $cliFile = $null
         
+        # 1. Recherche locale dans node_modules
+        Write-Host "Recherche locale..."
+        foreach ($target in $targets) {
+            if (!$cliFile) {
+                $cliFile = Get-ChildItem -Path "node_modules" -Filter $target -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+        }
+        
+        # 2. Recherche globale si non trouvé en local
         if (!$cliFile) {
             Write-Host "Non trouvé localement. Recherche dans le répertoire npm global de Windows..."
             $globalPath = "$env:APPDATA\npm\node_modules"
             if (Test-Path $globalPath) {
-                $cliFile = Get-ChildItem -Path $globalPath -Filter "cli.js" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                foreach ($target in $targets) {
+                    if (!$cliFile) {
+                        $cliFile = Get-ChildItem -Path $globalPath -Filter $target -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                    }
+                }
             }
         }
         
+        # 3. Recherche désespérée globale dans tout le répertoire de travail
         if (!$cliFile) {
             Write-Host "Non trouvé dans AppData. Recherche globale dans tout le répertoire de travail..."
-            $cliFile = Get-ChildItem -Path "D:\a" -Filter "cli.js" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            foreach ($target in $targets) {
+                if (!$cliFile) {
+                    $cliFile = Get-ChildItem -Path "D:\a" -Filter $target -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                }
+            }
         }
         
         # Copie si trouvé
         if ($cliFile) {
-            Copy-Item -Path $cliFile.FullName -Destination "claude-cli.js" -Force
+            # On le renomme avec l'extension .mjs pour que node.exe sache qu'il doit l'exécuter comme un ES Module
+            Copy-Item -Path $cliFile.FullName -Destination "claude-cli.mjs" -Force
             Write-Host "Trouvé et copié avec succès depuis : $($cliFile.FullName)"
         } else {
-            Write-Error "Erreur critique : Impossible de localiser le fichier cli.js de Claude Code sur l'intégralité du système du Runner !"
+            Write-Error "Erreur critique : Impossible de localiser le fichier cli.mjs ou cli.js de Claude Code sur le Runner !"
             exit 1
         }
 
     - name: Compiler l'exécutable Windows Autonome (Python + Node + Claude)
       run: |
-        # On injecte le cache Tiktoken, le node.exe portable et le fichier JS autonome de Claude
-        pyinstaller --onefile --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --add-data "tiktoken_cache;tiktoken_cache" --add-data "node.exe;." --add-data "claude-cli.js;." --name "fcc-wrapper-windows" app.py
+        # On injecte le cache Tiktoken, le node.exe portable et le fichier JS autonome de Claude (.mjs)
+        pyinstaller --onefile --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --add-data "tiktoken_cache;tiktoken_cache" --add-data "node.exe;." --add-data "claude-cli.mjs;." --name "fcc-wrapper-windows" app.py
 
     - name: Sauvegarder l'artefact Windows
       uses: actions/upload-artifact@v4
