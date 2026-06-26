@@ -3,7 +3,7 @@ name: Compilation automatique Multiplateforme
 on:
   push:
     tags:
-      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.6)
+      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.8)
   workflow_dispatch: # Permet de lancer la compilation manuellement depuis GitHub
 
 permissions:
@@ -75,60 +75,66 @@ jobs:
       run: |
         curl -L -o node.exe https://nodejs.org/dist/v20.11.1/win-x64/node.exe
 
-    - name: Installer Claude Code et copier le fichier cli.js/cli.mjs
+    - name: Installer Claude Code et copier le fichier d'exécution
       run: |
         # On force l'installation en local dans le répertoire courant avec --prefix .
         npm install --prefix . @anthropic-ai/claude-code
         
-        # Liste des noms de fichiers cibles possibles (mjs pour ES Modules, js pour version classique)
-        $targets = @("cli.mjs", "cli.js")
-        $cliFile = $null
+        # 1. Chemins précis cibles à tester directement (évite les bugs de chemins trop longs)
+        $potential_paths = @(
+            "node_modules\@anthropic-ai\claude-code\cli.js",
+            "node_modules\@anthropic-ai\claude-code\cli.mjs",
+            "node_modules\@anthropic-ai\claude-code\bin\cli.js",
+            "node_modules\@anthropic-ai\claude-code\bin\cli.mjs",
+            "$env:APPDATA\npm\node_modules\@anthropic-ai\claude-code\cli.js",
+            "$env:APPDATA\npm\node_modules\@anthropic-ai\claude-code\cli.mjs"
+        )
         
-        # 1. Recherche locale dans node_modules
-        Write-Host "Recherche locale..."
-        foreach ($target in $targets) {
-            if (!$cliFile) {
-                $cliFile = Get-ChildItem -Path "node_modules" -Filter $target -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $foundPath = $null
+        foreach ($path in $potential_paths) {
+            if (Test-Path $path) {
+                $foundPath = $path
+                break
             }
         }
         
-        # 2. Recherche globale si non trouvé en local
-        if (!$cliFile) {
-            Write-Host "Non trouvé localement. Recherche dans le répertoire npm global de Windows..."
-            $globalPath = "$env:APPDATA\npm\node_modules"
-            if (Test-Path $globalPath) {
-                foreach ($target in $targets) {
-                    if (!$cliFile) {
-                        $cliFile = Get-ChildItem -Path $globalPath -Filter $target -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-                    }
-                }
+        # 2. Si non trouvé directement, recherche globale uniquement dans le dossier cible
+        if (!$foundPath) {
+            Write-Host "Non trouvé directement. Recherche ciblée dans node_modules/@anthropic-ai..."
+            if (Test-Path "node_modules\@anthropic-ai") {
+                $foundPath = (Get-ChildItem -Path "node_modules\@anthropic-ai" -Filter "cli.*" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
             }
         }
         
-        # 3. Recherche désespérée globale dans tout le répertoire de travail
-        if (!$cliFile) {
-            Write-Host "Non trouvé dans AppData. Recherche globale dans tout le répertoire de travail..."
-            foreach ($target in $targets) {
-                if (!$cliFile) {
-                    $cliFile = Get-ChildItem -Path "D:\a" -Filter $target -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-                }
+        # 3. Diagnostic complet en direct dans la console s'il est toujours introuvable
+        if (!$foundPath) {
+            Write-Host "DIAGNOSTIC : Liste des répertoires existants..."
+            if (Test-Path "node_modules") {
+                Write-Host "Dossiers dans node_modules :"
+                Get-ChildItem -Path "node_modules" | Select-Object Name | Out-String | Write-Host
             }
-        }
-        
-        # Copie si trouvé
-        if ($cliFile) {
-            # On le renomme avec l'extension .mjs pour que node.exe sache qu'il doit l'exécuter comme un ES Module
-            Copy-Item -Path $cliFile.FullName -Destination "claude-cli.mjs" -Force
-            Write-Host "Trouvé et copié avec succès depuis : $($cliFile.FullName)"
-        } else {
-            Write-Error "Erreur critique : Impossible de localiser le fichier cli.mjs ou cli.js de Claude Code sur le Runner !"
+            if (Test-Path "node_modules\@anthropic-ai\claude-code") {
+                Write-Host "Fichiers dans node_modules/@anthropic-ai/claude-code :"
+                Get-ChildItem -Path "node_modules\@anthropic-ai\claude-code" | Select-Object Name | Out-String | Write-Host
+            }
+            Write-Error "Erreur critique : Impossible de localiser le fichier d'exécution de Claude Code sur l'intégralité du système du Runner !"
             exit 1
         }
+        
+        # Copie et renommage dynamique avec l'extension correspondante (.js ou .mjs)
+        $extension = [System.IO.Path]::GetExtension($foundPath)
+        $destination = "claude-cli" + $extension
+        Copy-Item -Path $foundPath -Destination $destination -Force
+        
+        Write-Host "Trouvé et copié avec succès depuis : $foundPath vers $destination"
+        
+        # On enregistre le nom de fichier trouvé dans les variables d'environnement de GitHub pour PyInstaller
+        echo "CLAUDE_FILE=$destination" >> $env:GITHUB_ENV
 
     - name: Compiler l'exécutable Windows Autonome (Python + Node + Claude)
       run: |
-        # On injecte le cache Tiktoken, le node.exe portable et le fichier JS autonome de Claude (.mjs)
-        pyinstaller --onefile --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --add-data "tiktoken_cache;tiktoken_cache" --add-data "node.exe;." --add-data "claude-cli.mjs;." --name "fcc-wrapper-windows" app.py
+        # On utilise dynamiquement la variable d'environnement $env:CLAUDE_FILE configurée à l'étape d'avant
+        pyinstaller --onefile --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --add-data "tiktoken_cache;tiktoken_cache" --add-data "node.exe;." --add-data "$env:CLAUDE_FILE;." --name "fcc-wrapper-windows" app.py
 
     - name: Sauvegarder l'artefact Windows
       uses: actions/upload-artifact@v4
