@@ -1,0 +1,100 @@
+name: Compilation automatique Multiplateforme
+
+on:
+  push:
+    tags:
+      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.0)
+  workflow_dispatch: # Permet de lancer la compilation manuellement depuis GitHub
+
+permissions:
+  contents: write # Indispensable pour autoriser GitHub à publier la Release
+
+jobs:
+  build-linux:
+    name: Compilation Linux
+    runs-on: ubuntu-latest
+    steps:
+    - name: Récupérer le code
+      uses: actions/checkout@v4
+
+    - name: Installer Tkinter sur le système du Runner
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-tk
+
+    - name: Configurer Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Installer les dépendances
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install pyinstaller
+
+    - name: Compiler le binaire Linux
+      run: |
+        pyinstaller --onefile --name "fcc-wrapper-linux" app.py
+
+    - name: Sauvegarder l'artefact Linux
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaire-linux
+        path: dist/fcc-wrapper-linux
+
+  build-windows:
+    name: Compilation Windows
+    runs-on: windows-latest
+    steps:
+    - name: Récupérer le code
+      uses: actions/checkout@v4
+
+    - name: Configurer Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Installer les dépendances
+      run: |
+        python -m pip install --upgrade pip
+        if (Test-Path requirements.txt) { pip install -r requirements.txt }
+        pip install pyinstaller
+
+    - name: Compiler l'exécutable Windows
+      run: |
+        # --noconsole empêche l'apparition d'un terminal noir vide sous Windows
+        pyinstaller --onefile --noconsole --name "fcc-wrapper-windows" app.py
+
+    - name: Sauvegarder l'artefact Windows
+      uses: actions/upload-artifact@v4
+      with:
+        name: executable-windows
+        path: dist/fcc-wrapper-windows.exe
+
+  publish-release:
+    name: Publication de la Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') # Publie uniquement s'il s'agit d'un tag v*
+    steps:
+    - name: Télécharger l'artefact Linux
+      uses: actions/download-artifact@v4
+      with:
+        name: binaire-linux
+        path: ./artifacts
+
+    - name: Télécharger l'artefact Windows
+      uses: actions/download-artifact@v4
+      with:
+        name: executable-windows
+        path: ./artifacts
+
+    - name: Créer la Release GitHub et y attacher les fichiers
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          ./artifacts/fcc-wrapper-linux
+          ./artifacts/fcc-wrapper-windows.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
