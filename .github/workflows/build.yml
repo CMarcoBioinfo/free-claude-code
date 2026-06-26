@@ -3,7 +3,7 @@ name: Compilation automatique Multiplateforme
 on:
   push:
     tags:
-      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.4)
+      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.6)
   workflow_dispatch: # Permet de lancer la compilation manuellement depuis GitHub
 
 permissions:
@@ -77,14 +77,32 @@ jobs:
 
     - name: Installer Claude Code et copier le fichier cli.js
       run: |
-        npm install @anthropic-ai/claude-code
-        # Recherche récursive robuste du fichier cli.js dans node_modules
-        $cliFile = Get-ChildItem -Path "node_modules" -Filter "cli.js" -Recurse | Select-Object -First 1
+        # On force l'installation en local dans le répertoire courant avec --prefix .
+        npm install --prefix . @anthropic-ai/claude-code
+        
+        # Recherche multi-zones ultra-robuste de cli.js
+        Write-Host "Recherche locale du fichier cli.js..."
+        $cliFile = Get-ChildItem -Path "node_modules" -Filter "cli.js" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        
+        if (!$cliFile) {
+            Write-Host "Non trouvé localement. Recherche dans le répertoire npm global de Windows..."
+            $globalPath = "$env:APPDATA\npm\node_modules"
+            if (Test-Path $globalPath) {
+                $cliFile = Get-ChildItem -Path $globalPath -Filter "cli.js" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+        }
+        
+        if (!$cliFile) {
+            Write-Host "Non trouvé dans AppData. Recherche globale dans tout le répertoire de travail..."
+            $cliFile = Get-ChildItem -Path "D:\a" -Filter "cli.js" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        
+        # Copie si trouvé
         if ($cliFile) {
             Copy-Item -Path $cliFile.FullName -Destination "claude-cli.js" -Force
-            Write-Host "Trouvé et copié avec succès : $($cliFile.FullName)"
+            Write-Host "Trouvé et copié avec succès depuis : $($cliFile.FullName)"
         } else {
-            Write-Error "Erreur : Impossible de trouver le fichier cli.js de Claude Code dans node_modules !"
+            Write-Error "Erreur critique : Impossible de localiser le fichier cli.js de Claude Code sur l'intégralité du système du Runner !"
             exit 1
         }
 
