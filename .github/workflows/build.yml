@@ -3,7 +3,7 @@ name: Compilation automatique Multiplateforme
 on:
   push:
     tags:
-      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.0)
+      - 'v*' # Se déclenche lors de la création d'un tag (ex: v1.0.3)
   workflow_dispatch: # Permet de lancer la compilation manuellement depuis GitHub
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
     - name: Configurer Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.14' # <--- Changement de 3.10 à 3.14
+        python-version: '3.14'
 
     - name: Installer les dépendances
       run: |
@@ -33,9 +33,14 @@ jobs:
         pip install .
         pip install pyinstaller
 
+    - name: Préparer le cache hors-ligne Tiktoken
+      run: |
+        mkdir -p tiktoken_cache
+        curl -o tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4 https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+
     - name: Compiler le binaire Linux
       run: |
-        pyinstaller --onefile --name "fcc-wrapper-linux" app.py
+        pyinstaller --onefile --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --add-data "tiktoken_cache:tiktoken_cache" --name "fcc-wrapper-linux" app.py
 
     - name: Sauvegarder l'artefact Linux
       uses: actions/upload-artifact@v4
@@ -53,7 +58,7 @@ jobs:
     - name: Configurer Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.14' # <--- Changement de 3.10 à 3.14
+        python-version: '3.14'
 
     - name: Installer les dépendances
       run: |
@@ -61,9 +66,14 @@ jobs:
         pip install .
         pip install pyinstaller
 
+    - name: Préparer le cache hors-ligne Tiktoken
+      run: |
+        mkdir tiktoken_cache
+        curl -o tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4 https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+
     - name: Compiler l'exécutable Windows
       run: |
-        pyinstaller --onefile --name "fcc-wrapper-windows" app.py
+        pyinstaller --onefile --hidden-import=tiktoken_ext.openai_public --hidden-import=tiktoken_ext --add-data "tiktoken_cache;tiktoken_cache" --name "fcc-wrapper-windows" app.py
 
     - name: Sauvegarder l'artefact Windows
       uses: actions/upload-artifact@v4
